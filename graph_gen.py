@@ -34,8 +34,8 @@ def generate_connected_zero_mass(rows, cols, zero_fraction):
                     break
 
     # Ensure the bottom 20% of the map is clear
-    array[-1, :] = 0
-    array[-2, :] = 0
+    array[-1, 2:-2] = 0
+    array[-2, 2:-2] = 0
 
     return array
 

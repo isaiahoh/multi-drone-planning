@@ -1,11 +1,11 @@
 import numpy as np
 import sys
 import cv2
+from visualization import darp_area_visualization
 import time
 import random
 import os
 from numba import njit
-from visualization import darp_area_visualization
 
 np.set_printoptions(threshold=sys.maxsize)
 
@@ -36,7 +36,7 @@ def inverse_binary_map_as_uint8(BinaryMap):
     return np.logical_not(BinaryMap).astype(np.uint8)
 
 @njit(fastmath=True)
-def euclidian_distance_points2d(array1: np.array, array2: np.array) -> np.float64:
+def euclidian_distance_points2d(array1: np.array, array2: np.array) -> np.float_:
     # this runs much faster than the (numba) np.linalg.norm and is totally enough for our purpose
     return (
                    ((array1[0] - array2[0]) ** 2) +
@@ -82,14 +82,12 @@ def CalcConnectedMultiplier(rows, cols, dist1, dist2, CCvariation):
 class DARP:
     def __init__(self, nx, ny, notEqualPortions, given_initial_positions, given_portions, obstacles_positions,
                  visualization, MaxIter=80000, CCvariation=0.01,
-                 randomLevel=0.01, dcells=10,
+                 randomLevel=0.0001, dcells=2,
                  importance=False):
 
         self.rows = nx
         self.cols = ny
-        self.initial_positions = given_initial_positions
-        self.obstacles_positions = obstacles_positions
-        self.portions = given_portions
+        self.initial_positions, self.obstacles_positions, self.portions = self.sanity_check(given_initial_positions, given_portions, obstacles_positions, notEqualPortions)
 
         self.visualization = visualization
         self.MaxIter = MaxIter
@@ -109,7 +107,7 @@ class DARP:
         self.droneNo = len(self.initial_positions)
         self.A = np.zeros((self.rows, self.cols))
         self.GridEnv = self.defineGridEnv()
-        self.portions = given_portions
+   
         self.connectivity = np.zeros((self.droneNo, self.rows, self.cols), dtype=np.uint8)
         self.BinaryRobotRegions = np.zeros((self.droneNo, self.rows, self.cols), dtype=bool)
 
@@ -118,22 +116,60 @@ class DARP:
         self.color = []
 
         for r in range(self.droneNo):
-            np.random.seed(r)
             self.color.append(list(np.random.choice(range(256), size=3)))
         
         if self.visualization:
             self.assignment_matrix_visualization = darp_area_visualization(self.A, self.droneNo, self.color, self.initial_positions)
+
+    def sanity_check(self, given_initial_positions, given_portions, obs_pos, notEqualPortions):
+        initial_positions = []
+        for position in given_initial_positions:
+            if position < 0 or position >= self.rows * self.cols:
+                print("Initial positions should be inside the Grid.")
+                sys.exit(1)
+            initial_positions.append((position // self.cols, position % self.cols))
+
+        obstacles_positions = []
+        for obstacle in obs_pos:
+            if obstacle < 0 or obstacle >= self.rows * self.cols:
+                print("Obstacles should be inside the Grid.")
+                sys.exit(2)
+            obstacles_positions.append((obstacle // self.cols, obstacle % self.cols))
+
+        portions = []
+        if notEqualPortions:
+            portions = given_portions
+        else:
+            for drone in range(len(initial_positions)):
+                portions.append(1 / len(initial_positions))
+
+        if len(initial_positions) != len(portions):
+            print("Portions should be defined for each drone")
+            sys.exit(3)
+
+        s = sum(portions)
+        if abs(s - 1) >= 0.0001:
+            print("Sum of portions should be equal to 1.")
+            sys.exit(4)
+
+        for position in initial_positions:
+            for obstacle in obstacles_positions:
+                if position[0] == obstacle[0] and position[1] == obstacle[1]:
+                    print("Initial positions should not be on obstacles")
+                    sys.exit(5)
+
+        return initial_positions, obstacles_positions, portions
           
     def defineGridEnv(self):
-        GridEnv = np.full(shape=(self.rows, self.cols), fill_value=0)
+        GridEnv = np.full(shape=(self.rows, self.cols), fill_value=-1)  # create non obstacle map with value -1
         
-        # obstacle tiles value is 1
+        # obstacle tiles value is -2
         for idx, obstacle_pos in enumerate(self.obstacles_positions):
-            GridEnv[obstacle_pos[0], obstacle_pos[1]] = 1
+            GridEnv[obstacle_pos[0], obstacle_pos[1]] = -2
 
         connectivity = np.zeros((self.rows, self.cols))
         
-        mask = np.where(GridEnv == 0)
+        mask = np.where(GridEnv == -1)
         connectivity[mask[0], mask[1]] = 255
         image = np.uint8(connectivity)
         num_labels, labels_im = cv2.connectedComponents(image, connectivity=4)
@@ -144,8 +180,8 @@ class DARP:
         
         # initial robot tiles will have their array.index as value
         for idx, robot in enumerate(self.initial_positions):
-            GridEnv[robot[0], robot[1]] = idx
-            self.A[robot[0], robot[1]] = idx
+            GridEnv[robot] = idx
+            self.A[robot] = idx
 
         return GridEnv
 
@@ -228,10 +264,11 @@ class DARP:
                             self.generateRandomMatrix(),
                             self.MetricMatrix[r],
                             ConnectedMultiplierList[r, :, :])
+
                 iteration += 1
                 if self.visualization:
-                        self.assignment_matrix_visualization.placeCells(self.A, iteration_number=iteration)
-                        time.sleep(0.2)
+                    self.assignment_matrix_visualization.placeCells(self.A, iteration_number=iteration)
+                    time.sleep(0.2)
 
             if iteration >= self.MaxIter:
                 self.MaxIter = self.MaxIter/2
@@ -340,3 +377,4 @@ class DARP:
             distRobot = (distRobot - MinV)*(1/(MaxV-MinV))
 
         return distRobot
+
